@@ -31,14 +31,14 @@ static evaluation parameters
 =======================================================================*/
 
 // evaluated object classes
-enum classes{car=0, pedestrian=1, cyclist=2};
-const int num_class = 3;
+enum classes{car=0, pedestrian=1, cyclist=2, truck=3};
+const int num_class = 4;
 
 // parameters varying per class
 vector<string> class_names;
 // the minimum overlap required for 2d evaluation on the image/ground plane and 3d evaluation7const double min_overlap[3] = {0.5, 0.5, 0.5};7
 // // no. of recall steps that should be evaluated (discretized)
-const double min_overlap[3] = {0.5, 0.5, 0.5};
+const double min_overlap[4] = {0.5, 0.5, 0.5, 0.5};
 
 const double n_sample_pts = 41;
 const int n_recall_step = 4;
@@ -49,6 +49,7 @@ void initglobals () {
   class_names.push_back("car");
   class_names.push_back("pedestrian");
   class_names.push_back("cyclist");
+  class_names.push_back("truck");
 }
 
 /*=======================================================================
