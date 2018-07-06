@@ -547,7 +547,8 @@ bool eval_class_given_threshold (classes current_class,
     cout << "tp, fp and fn are: " << tp << ", " << fp << ", and " << fn << endl;
   	double recall = tp / (tp + fn);
     double precision = tp / (tp + fp);
-    cout << "Given confidence socre thresold is: " << given_threshold << ", recall is: " 
+    cout << "Current object type is: " << class_names[current_class] 
+         << ", Given confidence socre thresold is: " << given_threshold << ", recall is: " 
          << recall << " and precision is: " << precision << endl;
 
     FILE *fp_curve = fopen(("/home/saiclei/curve_" + class_names[current_class] + ".txt").c_str(),"a+");

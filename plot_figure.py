@@ -1,5 +1,7 @@
 import subprocess
 import matplotlib.pyplot as plt
+import numpy as np
+
 
 if __name__ == "__main__":
     # write the result into file
@@ -15,4 +17,10 @@ if __name__ == "__main__":
                      str(given_threshold)])
 
 
-
+    car_curve = np.loadtxt("/home/saiclei/curve_car.txt")
+    plt.plot([1, 2], car_curve[:, 0], 'ro')
+    plt.plot([1, 2], car_curve[:, 1], 'b*')
+    plt.axis([40, 160, 0, 0.03])
+    plt.xlabel('iterations')
+    plt.ylabel('Precision and Recall')
+    plt.show()
