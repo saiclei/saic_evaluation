@@ -549,6 +549,10 @@ bool eval_class_given_threshold (classes current_class,
     double precision = tp / (tp + fp);
     cout << "Given confidence socre thresold is: " << given_threshold << ", recall is: " 
          << recall << " and precision is: " << precision << endl;
+
+    FILE *fp_curve = fopen(("/home/saiclei/curve_" + class_names[current_class] + ".txt").c_str(),"a+");
+    fprintf(fp_curve, "%f %f\n", precision, recall);
+    fclose(fp_curve);
    return true; 
 }
 
