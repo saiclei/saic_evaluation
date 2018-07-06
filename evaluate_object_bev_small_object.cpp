@@ -31,14 +31,14 @@ static evaluation parameters
 =======================================================================*/
 
 // evaluated object classes
-enum classes{car=0, pedestrian=1, cyclist=2, truck=3};
+enum classes{car=0, pedestrian=1, truck=3};
 const int num_class = 4;
 
 // parameters varying per class
 vector<string> class_names;
 // the minimum overlap required for 2d evaluation on the image/ground plane and 3d evaluation7const double min_overlap[3] = {0.5, 0.5, 0.5};7
 // // no. of recall steps that should be evaluated (discretized)
-const double min_overlap[4] = {0.5, 0.5, 0.5, 0.5};
+const double min_overlap[3] = {0.5, 0.2, 0.5};
 
 const double n_sample_pts = 41;
 const int n_recall_step = 4;
@@ -48,7 +48,6 @@ const double d_sum_denominator = 11;
 void initglobals () {
   class_names.push_back("car");
   class_names.push_back("pedestrian");
-  class_names.push_back("cyclist");
   class_names.push_back("truck");
 }
 
@@ -119,72 +118,77 @@ vector<int32_t> indices;
 
 vector<tdetection> loaddetections(string file_name, vector<bool> &eval_ground, bool &success) {
 
-  // holds all detections (ignored detections are indicated by an index vector
-  vector<tdetection> detections;
-  FILE *fp = fopen(file_name.c_str(),"r");
-  if (!fp) {
-    success = false;
-    return detections;
-  }
-  while (!feof(fp)) {
-    tdetection d;
-    double trash;
-    char str[255];
-    if (fscanf(fp, "%s %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf",
+    // holds all detections (ignored detections are indicated by an index vector
+    vector<tdetection> detections;
+    FILE *fp = fopen(file_name.c_str(),"r");
+    if (!fp) {
+        success = false;
+        return detections;
+    }
+    while (!feof(fp)) {
+        tdetection d;
+        double trash;
+        char str[255];
+        if (fscanf(fp, "%s %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf",
                    str, &trash, &trash, &d.box.alpha, &d.box.x1, &d.box.y1,
                    &d.box.x2, &d.box.y2, &d.h, &d.w, &d.l, &d.t1, &d.t2, &d.t3,
                    &d.ry, &d.thresh)==16) {
 
-        // d.thresh = 1;
-      d.box.type = str;
-      if (!strcasecmp(str, "van"))
-        d.box.type = "car";
+            // d.thresh = 1;
+            d.box.type = str;
+            if (!strcasecmp(str, "van"))
+                d.box.type = "car";
 
-      detections.push_back(d);
+            if (!strcasecmp(str, "cyclist"))
+                d.box.type = "pedestrian";
+            detections.push_back(d);
 
 
-      // a class is only evaluated if it is detected at least once
-      for (int c = 0; c < num_class; c++) {
-		// strcasecmp: compare strings without case sensitivity, <0: less, ==0 equal, >0: larger
-        if (!strcasecmp(d.box.type.c_str(), class_names[c].c_str())) {
-          //if (!eval_ground[c] && d.t1 != -1000 && d.t3 != -1000 && d.w > 0 && d.l > 0)
-          eval_ground[c] = true;
-          break;
+            // a class is only evaluated if it is detected at least once
+            for (int c = 0; c < num_class; c++) {
+		    // strcasecmp: compare strings without case sensitivity, <0: less, ==0 equal, >0: larger
+                if (!strcasecmp(d.box.type.c_str(), class_names[c].c_str())) {
+                    //if (!eval_ground[c] && d.t1 != -1000 && d.t3 != -1000 && d.w > 0 && d.l > 0)
+                    eval_ground[c] = true;
+                    break;
+                }
+            }
         }
-      }
     }
-  }
-  fclose(fp);
-  success = true;
-  return detections;
+    fclose(fp);
+    success = true;
+    return detections;
 }
 
 vector<tgroundtruth> loadgroundtruth(string file_name,bool &success) {
 
-  // holds all ground truth (ignored ground truth is indicated by an index vector
-  vector<tgroundtruth> groundtruth;
-  FILE *fp = fopen(file_name.c_str(),"r");
-  if (!fp) {
-    success = false;
-    return groundtruth;
-  }
-  while (!feof(fp)) {
-    tgroundtruth g;
-    char str[255];
-    if (fscanf(fp, "%s %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf",
+    // holds all ground truth (ignored ground truth is indicated by an index vector
+    vector<tgroundtruth> groundtruth;
+    FILE *fp = fopen(file_name.c_str(),"r");
+    if (!fp) {
+        success = false;
+        return groundtruth;
+    }
+    while (!feof(fp)) {
+        tgroundtruth g;
+        char str[255];
+        if (fscanf(fp, "%s %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf",
                    str, &g.truncation, &g.occlusion, &g.box.alpha,
                    &g.box.x1,   &g.box.y1,     &g.box.x2,    &g.box.y2,
                    &g.h,      &g.w,        &g.l,       &g.t1,
                    &g.t2,      &g.t3,        &g.ry )==15) {
-      g.box.type = str;
-      if (!strcasecmp(str, "van"))
-        g.box.type = "car";
-      groundtruth.push_back(g);
+        g.box.type = str;
+        if (!strcasecmp(str, "van"))
+            g.box.type = "car";
+
+        if (!strcasecmp(str, "cyclist"))
+            g.box.type = "pedestrian";
+        groundtruth.push_back(g);
+        }
     }
-  }
-  fclose(fp);
-  success = true;
-  return groundtruth;
+    fclose(fp);
+    success = true;
+    return groundtruth;
 }
 
 void savestats (const vector<double> &precision,  FILE *fp_det) {
@@ -543,7 +547,7 @@ bool eval_class_given_threshold (classes current_class,
     cout << "tp, fp and fn are: " << tp << ", " << fp << ", and " << fn << endl;
   	double recall = tp / (tp + fn);
     double precision = tp / (tp + fp);
-    cout << "For object type: " << current_class << ", given confidence socre thresold is: " << given_threshold << ", recall is: " 
+    cout << "Given confidence socre thresold is: " << given_threshold << ", recall is: " 
          << recall << " and precision is: " << precision << endl;
    return true; 
 }
