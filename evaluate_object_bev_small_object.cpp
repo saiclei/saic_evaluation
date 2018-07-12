@@ -38,6 +38,8 @@ const int num_class = 4;
 vector<string> class_names;
 // the minimum overlap required for 2d evaluation on the image/ground plane and 3d evaluation7const double min_overlap[3] = {0.5, 0.5, 0.5};7
 // // no. of recall steps that should be evaluated (discretized)
+
+// IOU min : car ped/cyc truck
 const double min_overlap[3] = {0.5, 0.2, 0.5};
 
 const double n_sample_pts = 41;
@@ -512,7 +514,7 @@ evaluate class-wise
 bool eval_class_given_threshold (classes current_class,
                  const vector< vector<tgroundtruth> > &groundtruth,
                  const vector< vector<tdetection> > &detections,
-                  double (*boxoverlap)(tdetection, tgroundtruth, int32_t), double given_threshold = 0.5) {
+                  double (*boxoverlap)(tdetection, tgroundtruth, int32_t), double given_threshold = 0.5, bool flag = false) {
 
 	assert(groundtruth.size() == detections.size());
   	// init
@@ -551,10 +553,18 @@ bool eval_class_given_threshold (classes current_class,
          << ", Given confidence socre thresold is: " << given_threshold << ", recall is: " 
          << recall << " and precision is: " << precision << endl;
 
-    FILE *fp_curve = fopen(("/home/saiclei/curve_" + class_names[current_class] + ".txt").c_str(),"a+");
-    fprintf(fp_curve, "%f %f\n", precision, recall);
-    fclose(fp_curve);
-   return true; 
+    if(flag) { //if true finetuned model
+       FILE *fp_curve = fopen(("/mnt/data2/test_xuetao/LidarAnnotation_old/curve_" + class_names[current_class] + ".txt").c_str(),"a+"); // a+ can append on original txt file's content
+       fprintf(fp_curve, "%f %f\n", precision, recall);
+       fclose(fp_curve);
+    }
+    else {
+       FILE *fp_curve = fopen(("/mnt/data2/test_xuetao/LidarAnnotation_old/curve_nofinetune_" + class_names[current_class] + ".txt").c_str(),"a+");
+       fprintf(fp_curve, "%f %f\n", precision, recall);
+       fclose(fp_curve);
+    }
+   
+    return true; 
 }
 
 
@@ -594,7 +604,7 @@ vector<int32_t> getevalindices(const string& result_dir) {
     return indices;
 }
 
-bool eval(string gt_dir, string result_dir, double given_threshold = 0.0){
+bool eval(string gt_dir, string result_dir, double given_threshold = 0.0, bool flag = false){
     // set some global parameters
     initglobals();
 
@@ -645,13 +655,12 @@ bool eval(string gt_dir, string result_dir, double given_threshold = 0.0){
     // holds pointers for result files
     FILE *fp_det=0, *fp_ori=0;
 
-
     if (abs(given_threshold - 0.0) > 0.0001) {
         // eval bird's eye view bounding boxes
         for (int c = 0; c < num_class; c++) {
             classes cls = (classes)c;
             if (eval_ground[c]) {
-                if( !eval_class_given_threshold(cls, groundtruth, detections, groundboxoverlap, given_threshold)) {
+                if( !eval_class_given_threshold(cls, groundtruth, detections, groundboxoverlap, given_threshold, flag)) {
                     cout << "given threshold evaluation failed." << endl;
                     return false;
                 }
@@ -687,24 +696,27 @@ For detection format, we can:
 
 int32_t main (int32_t argc,char *argv[]) {
 
-    if (argc < 3) {
-        cout << "Usage: ./eval_detection_bev gt_dir result_dir\n";
+    if (argc < 4) {
+        cout << "Usage: ./eval_detection_bev gt_dir result_dir flag threshold\n";
         return 1;
     }
-
     // read arguments
     string gt_dir = argv[1];
     string result_dir = argv[2];
+    string flag = argv[3];
     double given_threshold = 0.0;
-    if (argc == 4)
-        given_threshold = atof(argv[3]);
-    if (argc > 4) {
+    if (argc == 5) {
+        given_threshold = atof(argv[4]);
+    }
+    if (argc > 5) {
         cout << "Too many arguments...\n";
         return 1;
     }
+
+    bool flag_bool = (strcasecmp(flag.c_str(), "true") == 0); 
     
     // run evaluation
-    if (eval(gt_dir, result_dir, given_threshold)) {
+    if (eval(gt_dir, result_dir, given_threshold, flag_bool)) {
         cout << "your evaluation results are available at: " << result_dir.c_str() << endl;
     } else {
         system(("rm -r " + result_dir + "/plot").c_str());
