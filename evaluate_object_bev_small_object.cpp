@@ -25,14 +25,20 @@ typedef boost::geometry::model::polygon<boost::geometry::model::d2::point_xy<dou
 
 using namespace std;
 
+template<typename T>
+void showVec(const T& container) {
+    for (const auto& item : container) {
+        cout << item << '\n';
+    }
+}
 
 /*=======================================================================
 static evaluation parameters
 =======================================================================*/
 
 // evaluated object classes
-enum classes{car=0, pedestrian=1, truck=3};
-const int num_class = 4;
+enum classes{car=0, pedestrian=1, truck=2};
+const int num_class = 3;
 
 // parameters varying per class
 vector<string> class_names;
@@ -58,9 +64,9 @@ data types for evaluation
 // holding data needed for precision-recall and precision-aos
 struct tprdata {
   vector<double> v;           // detection score for computing score thresholds
-  int32_t        tp;          // true positives
-  int32_t        fp;          // false positives
-  int32_t        fn;          // false negatives
+  int        tp;          // true positives
+  int        fp;          // false positives
+  int        fn;          // false negatives
   tprdata () :
     tp(0), fp(0), fn(0) {}
 };
@@ -92,6 +98,7 @@ struct tgroundtruth {
   tgroundtruth (string type,double x1,double y1,double x2,double y2,double alpha,double truncation,int32_t occlusion) :
     box(tbox(type,x1,y1,x2,y2,alpha)),truncation(truncation),occlusion(occlusion) {}
 };
+
 
 // holding detection data
 struct tdetection {
@@ -261,229 +268,258 @@ inline double groundboxoverlap(tdetection d, tgroundtruth g, int32_t criterion =
     return o;
 }
 
-vector<double> getthresholds(vector<double> &v, double n_groundtruth){
 
-  // holds scores needed to compute n_sample_pts recall values
-  vector<double> t;
+vector<double> getThresholds(vector<double>& v, double n_groundtruth) {
+    vector<double> t;
 
-  // sort scores in descending order
-  // (highest score is assumed to give best/most confident detections)
-  sort(v.begin(), v.end(), greater<double>());
+    sort(v.begin(), v.end(), greater<double>());
 
-  // get scores for linearly spaced recall
-  double current_recall = 0;
-  for(int32_t i=0; i<v.size(); i++){
+    double current_recall = 0;
 
-    // check if right-hand-side recall with respect to current recall is close than left-hand-side one
-    // in this case, skip the current detection score
-    double l_recall, r_recall, recall;
-    l_recall = (double)(i+1)/n_groundtruth;
-    if(i<(v.size()-1))
-      r_recall = (double)(i+2)/n_groundtruth;
-    else
-      r_recall = l_recall;
+    for (int i = 0; i < v.size(); ++i) {
+        double l_recall, r_recall, recall;
+        l_recall = (double)(i+1) / n_groundtruth;
+        if (i < v.size() - 1)
+            r_recall = (double)(i+2) / n_groundtruth;
+        else
+            r_recall = l_recall;
 
-    if( (r_recall-current_recall) < (current_recall-l_recall) && i<(v.size()-1))
-      continue;
+        if ( (r_recall - current_recall) < (current_recall - l_recall) && i < (v.size() - 1))
+            continue;
 
-    // left recall is the best approximation, so use this and goto next recall step for approximation
-    recall = l_recall;
+        recall = l_recall;
 
-    // the next recall step was reached
-    t.push_back(v[i]);
-    current_recall += 1.0/(n_sample_pts-1.0);
-  }
-  return t;
+        t.push_back(v[i]);
+        current_recall += 1.0 / (n_sample_pts - 1.0);
+        cout << "current_recall is: " << current_recall << endl;
+    }
+    return t;
 }
 
-void cleandata(classes current_class, const vector<tgroundtruth> &gt, const vector<tdetection> &det, vector<int32_t> &ignored_gt, vector<int32_t> &ignored_det, int32_t &n_gt){
-  // extract ground truth bounding boxes for current evaluation class
-    for (int i = 0; i < gt.size(); ++i) {
-        if(!strcasecmp(gt[i].box.type.c_str(), class_names[current_class].c_str())) {
+void cleanData(classes current_class, const vector<tgroundtruth>& gt, const vector<tdetection>& det, vector<int>& ignored_gt,
+               vector<int>& ignored_det, int& n_gt) {
+    // cleanData for each image, ignored_gt and ignored_det is an empty vector corresponding to a single image
+    // n_gt count in the same class
+    for (const auto& gt_element : gt) {
+        if (!strcasecmp(gt_element.box.type.c_str(), class_names[current_class].c_str())) {
             ignored_gt.push_back(0);
             n_gt++;
-        } else {
+        } else
             ignored_gt.push_back(-1);
-        }
     }
-
-    // extract detections bounding boxes of the current class
-    for(int32_t i=0;i<det.size(); i++){
-        if(!strcasecmp(det[i].box.type.c_str(), class_names[current_class].c_str())) {
+    for (const auto& det_element : det) {
+        if (!strcasecmp(det_element.box.type.c_str(), class_names[current_class].c_str())) {
             ignored_det.push_back(0);
-        } else {
+        } else
             ignored_det.push_back(-1);
-        }
     }
-
 }
 
-tprdata computestatistics(classes current_class, const vector<tgroundtruth> &gt,
-        const vector<tdetection> &det, const vector<int32_t> &ignored_gt, const vector<int32_t>  &ignored_det,
-        bool compute_fp, double (*boxoverlap)(tdetection, tgroundtruth, int32_t),
-        double thresh=0, bool debug=false){
-
-  tprdata stat = tprdata();
-  const double no_detection = -10000000;
-  vector<bool> assigned_detection; // holds wether a detection was assigned to a valid or ignored ground truth
-  assigned_detection.assign(det.size(), false);
-  vector<bool> ignored_threshold;
-  ignored_threshold.assign(det.size(), false); // holds detections with a threshold lower than thresh if fp are computed
-
-  // detections with a low score are ignored for computing precision (needs fp)
-  if(compute_fp)
-    for(int32_t i=0; i<det.size(); i++)
-      if(det[i].thresh<thresh)
-        ignored_threshold[i] = true;
-
-  // evaluate all ground truth boxes
-  for(int32_t i=0; i<gt.size(); i++){
-
-    // this ground truth is not of the current or a neighboring class and therefore ignored
-    if(ignored_gt[i]==-1)
-      continue;
-
-    /*=======================================================================
-    find candidates (overlap with ground truth > 0.5) (logical len(det))
-    =======================================================================*/
-    int32_t det_idx          = -1;
-    double valid_detection = no_detection;
-    double max_overlap     = 0;
-
-    // search for a possible detection
-    bool assigned_ignored_det = false;
-    for(int32_t j=0; j<det.size(); j++){
-
-      // detections not of the current class, already assigned or with a low threshold are ignored
-      if(ignored_det[j]==-1)
-        continue;
-      if(assigned_detection[j])
-        continue;
-      if(ignored_threshold[j])
-        continue;
-
-      // find the maximum score for the candidates and get idx of respective detection
-      double overlap = boxoverlap(det[j], gt[i], -1);
-
-      // for computing recall thresholds, the candidate with highest score is considered
-      if(!compute_fp && overlap>min_overlap[current_class] && det[j].thresh>valid_detection){
-        det_idx         = j;
-        valid_detection = det[j].thresh;
-      }
-
-      // for computing pr curve values, the candidate with the greatest overlap is considered
-      else if(compute_fp && overlap>min_overlap[current_class] && (overlap>max_overlap || assigned_ignored_det) && ignored_det[j]==0){
-        max_overlap     = overlap;
-        det_idx         = j;
-        valid_detection = 1;
-        assigned_ignored_det = false;
-      }
-      else if(compute_fp && overlap>min_overlap[current_class] && valid_detection==no_detection && ignored_det[j]==1){
-        det_idx              = j;
-        valid_detection      = 1;
-        assigned_ignored_det = true;
-      }
+tprdata computeStatistics(classes current_class, const vector<tgroundtruth>& gt, const vector<tdetection>& det,
+                          const vector<int>& ignored_gt, const vector<int>& ignored_det,
+                          bool compute_fp, double (*boxoverlap)(tdetection, tgroundtruth, int),
+                          double thresh = 0) {
+    tprdata stat = tprdata();
+    const double no_detection = -1;
+    vector<bool> assigned_detection(det.size(), false);
+    vector<bool> ignored_threshold(det.size(), false);
+    double epsilon = 0.0001;
+    if (compute_fp) {
+        for (int i = 0; i < det.size(); ++i) {
+            if (det[i].thresh < thresh)
+                ignored_threshold[i] = true;
+        }
     }
 
-    /*=======================================================================
-    compute tp, fp and fn
-    =======================================================================*/
+    // Evaluate all ground truth boxes
+    for (int i = 0; i < gt.size(); ++i) {
+        if (ignored_gt[i] == -1)
+            continue;
+        
+        int det_idx = -1;
+        double valid_detection = no_detection;
+        double max_overlap = 0;
 
-    // nothing was assigned to this valid ground truth
-    if(valid_detection==no_detection && ignored_gt[i]==0) {
-      stat.fn++;
+        // Search for a possible detection
+        bool assigned_ignored_det = false;
+        for (int j = 0; j < det.size(); ++j) {
+            if (ignored_det[j] == -1 || assigned_detection[j] || ignored_threshold[j])
+                continue;
+            
+            // Find the maximum score for the candidates and get idx of respective detection
+            double overlap = boxoverlap(det[j], gt[i], -1);
+            if (!compute_fp && overlap > min_overlap[current_class] && det[j].thresh > valid_detection) {
+                det_idx = j;
+                valid_detection = det[j].thresh;
+            } else if (compute_fp && overlap > min_overlap[current_class] &&
+                       (overlap > max_overlap || assigned_ignored_det) && ignored_det[j] == 0) {
+                max_overlap             = overlap;
+                det_idx                 = j;
+                valid_detection         = 1;
+                assigned_ignored_det    = false;
+            } else if (compute_fp && overlap > min_overlap[current_class] &&
+                       valid_detection == no_detection && ignored_det[j] == 1) {
+                det_idx                 = j;
+                valid_detection         = 1;
+                assigned_ignored_det    = true;
+            }
+
+        }
+
+        // Compute tp, fp and fn
+        if (abs(valid_detection - no_detection) < epsilon && ignored_gt[i] == 0) {
+            stat.fn++;
+        }else if (abs(valid_detection - no_detection) > epsilon ) {
+            stat.tp++;
+            stat.v.push_back(det[det_idx].thresh);
+            assigned_detection[det_idx] = true;
+        }
+
     }
 
-    // only evaluate valid ground truth <=> detection assignments (considering difficulty level)
-    else if(valid_detection!=no_detection && (ignored_gt[i]==1 || ignored_det[det_idx]==1))
-      assigned_detection[det_idx] = true;
-
-    // found a valid true positive
-    else if(valid_detection!=no_detection){
-
-      // write highest score to threshold vector
-      stat.tp++;
-      stat.v.push_back(det[det_idx].thresh);
-
-
-      // clean up
-      assigned_detection[det_idx] = true;
-    }
-  }
-
-  // if fp are requested, consider stuff area
-  if(compute_fp) {
-
-    // count fp
-    for (int32_t i = 0; i < det.size(); i++) {
-
-      // count false positives if required (height smaller than required is ignored (ignored_det==1)
-      if (!(assigned_detection[i] || ignored_det[i] == -1 || ignored_det[i] == 1 || ignored_threshold[i]))
-        stat.fp++;
+    if (compute_fp) {
+        for (int i = 0; i < det.size(); ++i) {
+            if (!(assigned_detection[i] || ignored_det[i] == -1 || ignored_threshold[i]))
+                stat.fp++;
+        }
     }
 
-  }
-  return stat;
+    return stat;
+
 }
 
 /*=======================================================================
-evaluate class-wise
-=======================================================================*/
-
-bool eval_class (FILE *fp_det, FILE *fp_ori,classes current_class,
+ * Calculate the AP based on the rule after VOC 2010
+=========================================================================*/
+bool new_eval_class (FILE *fp_det, FILE *fp_ori,classes current_class,
                  const vector< vector<tgroundtruth> > &groundtruth,
                  const vector< vector<tdetection> > &detections,
                   double (*boxoverlap)(tdetection, tgroundtruth, int32_t),
                  vector<double> &precision) {
-
-	assert(groundtruth.size() == detections.size());
+	assert(groundtruth.size() == detections.size());    // Make sure each image has a ground truth and detection respectively.
   	// init
-  	int32_t n_gt=0;                                     // total no. of gt (denominator of recall)
-  	vector<double> v, thresholds;                       // detection scores, evaluated for recall discretization
-  	vector< vector<int32_t> > ignored_gt, ignored_det;  // index of ignored gt detection for current class/difficulty
+  	int n_gt=0;                                     // total no. of gt (denominator of recall)
+  	vector<double> v, thresholds;                   // detection scores, evaluated for recall discretization
+  	vector< vector<int> > ignored_gt, ignored_det;  // index of ignored gt detection for current class
 
   	// for all test images do
-  	for (int32_t i=0; i<groundtruth.size(); i++){
+  	for (int i=0; i<groundtruth.size(); i++){
     	// holds ignored ground truth, ignored detections and dontcare areas for current frame
-    	vector<int32_t> i_gt, i_det;
+    	vector<int> i_gt, i_det;
 
-    	// only evaluate objects of current class and ignore occluded, truncated objects
-    	cleandata(current_class, groundtruth[i], detections[i], i_gt, i_det, n_gt);
+    	// only evaluate objects of current class 
+    	cleanData(current_class, groundtruth[i], detections[i], i_gt, i_det, n_gt); 
     	ignored_gt.push_back(i_gt);
     	ignored_det.push_back(i_det);
 
-    	// compute statistics to get recall values
+    	// compute statistics to get recall values, tp/(tp+fn)
     	tprdata pr_tmp = tprdata();
-    	pr_tmp = computestatistics(current_class, groundtruth[i], detections[i], i_gt, i_det, false, boxoverlap, false, false);
+    	pr_tmp = computeStatistics(current_class, groundtruth[i], detections[i], i_gt, i_det, false, boxoverlap, 0);
 
     	// add detection scores to vector over all images
-    	for(int32_t j=0; j<pr_tmp.v.size(); j++)
-      	v.push_back(pr_tmp.v[j]);
+    	for(int j=0; j<pr_tmp.v.size(); j++)
+      	    v.push_back(pr_tmp.v[j]);
   	}
+  
+    sort(v.begin(), v.end(), greater<double>());
 
   	// get scores that must be evaluated for recall discretization
-  	thresholds = getthresholds(v, n_gt);
-    // thresholds = getEachThresholds(v);
+  	thresholds = v;
   	// compute tp,fp,fn for relevant scores
-  	vector<tprdata> pr;
-  	pr.assign(thresholds.size(),tprdata());
-  	for (int32_t i=0; i<groundtruth.size(); i++){
+  	vector<tprdata> pr(thresholds.size(), tprdata());
+  	for (int i=0; i<groundtruth.size(); i++){
 
     	// for all scores/recall thresholds do:
     	for(int32_t t=0; t<thresholds.size(); t++){
       		tprdata tmp = tprdata();
-      		tmp = computestatistics(current_class, groundtruth[i], detections[i], 
+      		tmp = computeStatistics(current_class, groundtruth[i], detections[i], 
                               ignored_gt[i], ignored_det[i], true, boxoverlap,
-                              thresholds[t], t==38);
+                              thresholds[t]);
 
-      		// add no. of tp, fp, fn, aos for current frame to total evaluation for current threshold
+      		// add no. of tp, fp, fn for current frame to total evaluation for current threshold
       		pr[t].tp += tmp.tp;
       		pr[t].fp += tmp.fp;
       		pr[t].fn += tmp.fn;
     	}
   	}
 
-  	// compute recall, precision and aos
+  	// compute recall, precision 
+  	vector<double> recall;
+    precision.assign(thresholds.size(), 0);
+
+  	double r=0;
+  	for (int32_t i=0; i<thresholds.size(); i++){
+    	r = pr[i].tp/(double)(pr[i].tp + pr[i].fn);
+    	recall.push_back(r);
+    	precision[i] = pr[i].tp/(double)(pr[i].tp + pr[i].fp);
+
+  	}
+
+  	// filter precision using max_{i..end}(precision)
+  	for (int32_t i=0; i<thresholds.size(); i++){
+    	precision[i] = *max_element(precision.begin()+i, precision.end());
+  	}
+
+  	// save statisics and finish with success
+  	savestats(precision, fp_det);
+    return true;
+}
+
+/*=======================================================================
+evaluate class-wise
+=======================================================================*/
+bool eval_class (FILE *fp_det, FILE *fp_ori,classes current_class,
+                 const vector< vector<tgroundtruth> > &groundtruth,
+                 const vector< vector<tdetection> > &detections,
+                  double (*boxoverlap)(tdetection, tgroundtruth, int32_t),
+                 vector<double> &precision) {
+	assert(groundtruth.size() == detections.size());    // Make sure each image has a ground truth and detection respectively.
+  	// init
+  	int n_gt=0;                                     // total no. of gt (denominator of recall)
+  	vector<double> v, thresholds;                   // detection scores, evaluated for recall discretization
+  	vector< vector<int> > ignored_gt, ignored_det;  // index of ignored gt detection for current class
+
+  	// for all test images do
+  	for (int i=0; i<groundtruth.size(); i++){
+    	// holds ignored ground truth, ignored detections and dontcare areas for current frame
+    	vector<int> i_gt, i_det;
+
+    	// only evaluate objects of current class 
+    	cleanData(current_class, groundtruth[i], detections[i], i_gt, i_det, n_gt); 
+    	ignored_gt.push_back(i_gt);
+    	ignored_det.push_back(i_det);
+
+    	// compute statistics to get recall values, tp/(tp+fn)
+    	tprdata pr_tmp = tprdata();
+    	pr_tmp = computeStatistics(current_class, groundtruth[i], detections[i], i_gt, i_det, false, boxoverlap, 0);
+
+    	// add detection scores to vector over all images
+    	for(int j=0; j<pr_tmp.v.size(); j++)
+      	    v.push_back(pr_tmp.v[j]);
+  	}
+     
+  	// get scores that must be evaluated for recall discretization
+  	thresholds = getThresholds(v, n_gt);
+    cout << "v size is: " << v.size() << " and thresholds size is: " << thresholds.size() << endl;
+  	// compute tp,fp,fn for relevant scores
+  	vector<tprdata> pr(thresholds.size(), tprdata());
+  	for (int i=0; i<groundtruth.size(); i++){
+
+    	// for all scores/recall thresholds do:
+    	for(int32_t t=0; t<thresholds.size(); t++){
+      		tprdata tmp = tprdata();
+      		tmp = computeStatistics(current_class, groundtruth[i], detections[i], 
+                              ignored_gt[i], ignored_det[i], true, boxoverlap,
+                              thresholds[t]);
+
+      		// add no. of tp, fp, fn for current frame to total evaluation for current threshold
+      		pr[t].tp += tmp.tp;
+      		pr[t].fp += tmp.fp;
+      		pr[t].fn += tmp.fn;
+    	}
+  	}
+
+  	// compute recall, precision 
   	vector<double> recall;
   	precision.assign(n_sample_pts, 0);
 
@@ -495,7 +531,7 @@ bool eval_class (FILE *fp_det, FILE *fp_ori,classes current_class,
 
   	}
 
-  	// filter precision and aos using max_{i..end}(precision)
+  	// filter precision using max_{i..end}(precision)
   	for (int32_t i=0; i<thresholds.size(); i++){
     	precision[i] = *max_element(precision.begin()+i, precision.end());
   	}
@@ -504,6 +540,7 @@ bool eval_class (FILE *fp_det, FILE *fp_ori,classes current_class,
   	savestats(precision, fp_det);
     return true;
 }
+
 
 /*=======================================================================
 evaluate class-wise
@@ -525,7 +562,7 @@ bool eval_class_given_threshold (classes current_class,
     	vector<int32_t> i_gt, i_det;
 
     	// only evaluate objects of current class and ignore occluded, truncated objects
-    	cleandata(current_class, groundtruth[i], detections[i], i_gt, i_det, n_gt);
+    	cleanData(current_class, groundtruth[i], detections[i], i_gt, i_det, n_gt);
     	ignored_gt.push_back(i_gt);
     	ignored_det.push_back(i_det);
 
@@ -537,7 +574,7 @@ bool eval_class_given_threshold (classes current_class,
     double tp = 0, fp = 0, fn = 0;
     for (int i = 0; i < groundtruth.size(); ++i) {
         tprdata tmp = tprdata();
-        tmp = computestatistics(current_class, groundtruth[i], detections[i], 
+        tmp = computeStatistics(current_class, groundtruth[i], detections[i], 
                               ignored_gt[i], ignored_det[i], true, boxoverlap,
                               given_threshold);
         tp += tmp.tp;
