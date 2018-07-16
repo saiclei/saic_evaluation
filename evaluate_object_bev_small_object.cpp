@@ -568,7 +568,7 @@ bool eval_class_given_threshold (classes current_class,
 }
 
 
-void saveandplotplots(string dir_name,string file_name,string obj_type,vector<double> vals){
+void saveandplotplots(string dir_name,string file_name,string obj_type,vector<double> vals, bool flag = false){
 
     char command[1024];
 
@@ -585,6 +585,18 @@ void saveandplotplots(string dir_name,string file_name,string obj_type,vector<do
 
     printf("%s ap:%f\n", file_name.c_str(), sum / d_sum_denominator * 100);
 
+    // xuetao
+    if(flag) {
+        FILE *mAP_curve = fopen(("/mnt/data2/test_xuetao/LidarAnnotation_old/mAP_curve_" + obj_type + ".txt").c_str(),"a+"); // a+ can append on original txt file's content
+        fprintf(mAP_curve, "%f\n", sum / d_sum_denominator * 100);
+        fclose(mAP_curve);
+    }
+
+    else {
+        FILE *mAP_curve = fopen(("/mnt/data2/test_xuetao/LidarAnnotation_old/mAP_curve_nofinetune_" + obj_type + ".txt").c_str(),"a+"); // a+ can append on original txt file's content
+        fprintf(mAP_curve, "%f\n", sum / d_sum_denominator * 100);
+        fclose(mAP_curve);
+    }
 }
 
 // need to check the file end with .txt
@@ -679,7 +691,7 @@ bool eval(string gt_dir, string result_dir, double given_threshold = 0.0, bool f
                     return false;
                 }
                 fclose(fp_det);
-                saveandplotplots(plot_dir, class_names[c] + "_detection_bev",class_names[c], precision);
+                saveandplotplots(plot_dir, class_names[c] + "_detection_bev",class_names[c], precision, flag);
             }
         }
     }
