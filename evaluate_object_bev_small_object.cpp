@@ -398,9 +398,9 @@ bool new_eval_class (FILE *fp_det, FILE *fp_ori,classes current_class,
                  const vector< vector<tgroundtruth> > &groundtruth,
                  const vector< vector<tdetection> > &detections,
                   double (*boxoverlap)(tdetection, tgroundtruth, int32_t),
-                 vector<double> recall,
-                 vector<double> thresholds,
-                 vector<double> &precision) {
+                 vector<double>& recall,
+                 vector<double>& thresholds,
+                 vector<double>& precision) {
 	assert(groundtruth.size() == detections.size());    // Make sure each image has a ground truth and detection respectively.
   	// init
   	int n_gt=0;                                     // total no. of gt (denominator of recall)
@@ -436,7 +436,10 @@ bool new_eval_class (FILE *fp_det, FILE *fp_ori,classes current_class,
     vector<tprdata> pr (v.size(), tprdata());
 
 
-    int tp, fp;
+    int tp(0), fp(0);
+	recall.push_back(0);
+	precision.push_back(0);
+	thresholds.push_back(1);
     for (int i = 0; i < test_vec.size(); ++i) {
         if (test_vec[i].second) {
             tp++;
@@ -448,7 +451,14 @@ bool new_eval_class (FILE *fp_det, FILE *fp_ori,classes current_class,
         }
     }
 
-
+		
+	for (int i = 0; i < precision.size(); ++i) {
+		precision[i] = *max_element(precision.begin() + i, precision.end());
+	}
+	
+	precision.push_back(0);
+	recall.push_back(recall.back());
+	thresholds.push_back(0);
   	// save statisics and finish with success
   	savestats(precision, fp_det);
     return true;
@@ -520,10 +530,11 @@ bool eval_class (FILE *fp_det, FILE *fp_ori,classes current_class,
   	}
 
   	// filter precision using max_{i..end}(precision)
+	/*
   	for (int32_t i=0; i<thresholds.size(); i++){
     	precision[i] = *max_element(precision.begin()+i, precision.end());
   	}
-
+	*/
   	// save statisics and finish with success
   	savestats(precision, fp_det);
     return true;
@@ -584,22 +595,59 @@ bool eval_class_given_threshold (classes current_class,
 
 // vals is precisions
 void newSaveAndPlotPlots(string dir_name, string file_name, string obj_type, 
-                         vector<double> recalls, vector<double> precisions) {
-    recalls.push_back(1.0);
-    precisions.push_back(0.0);
+                         vector<double> recalls, vector<double> precisions, vector<double> thresholds) {
+    assert(precisions.size() == recalls.size());
+	
     char command[1024];
     FILE *fp = fopen((dir_name + "/" + file_name + ".txt").c_str(), "w");
     for (int i = 0; i < precisions.size(); ++i) {
-        fprintf(fp, "%f %f\n", recalls[i], precisions[i]);
+        fprintf(fp, "%f %f %f\n", recalls[i], precisions[i], thresholds[i]);
     }
     fclose(fp);
     float sum = 0.0;
 
     for (int i = 0; i < recalls.size() - 1; ++i) {
-        sum += (recalls[i+1] - recalls[i]) * precisions[i];
+        sum += (recalls[i+1] - recalls[i]) * precisions[i+1];
     }
     printf("%s ap: %f\n", file_name.c_str(), sum); 
+    // create png + eps
+    for (int j=0; j<2; j++) {
+       
+        // open file
+        FILE *fp = fopen((dir_name + "/" + file_name + ".gp").c_str(),"w");
+        // save gnuplot instructions
+        if (j==0) {
+            fprintf(fp,"set term png size 450,315 font \"Helvetica\" 11\n");
+            fprintf(fp,"set output \"%s.png\"\n",file_name.c_str());
+        } else {
+            fprintf(fp,"set term postscript eps enhanced color font \"Helvetica\" 20\n");
+            fprintf(fp,"set output \"%s.eps\"\n",file_name.c_str());
+        }
 
+        // set labels and ranges
+        fprintf(fp,"set size ratio 0.7\n");
+        fprintf(fp,"set xrange [0:1]\n");
+        fprintf(fp,"set yrange [0:1]\n");
+        fprintf(fp,"set xlabel \"Recall\"\n");
+        fprintf(fp,"set ylabel \"Precision\"\n");
+        obj_type[0] = toupper(obj_type[0]);
+        fprintf(fp,"set title \"%s\"\n",obj_type.c_str());
+
+        // line width
+        int   lw = 5;
+        if (j==0) lw = 3;
+
+        // plot error curve
+        fprintf(fp,"plot ");
+        //fprintf(fp,"\"%s.txt\" using 1:2 title 'PR curve', using 1:3 title 'thresholds' with lines ls 1 lw %d,",file_name.c_str(),lw);
+        fprintf(fp,"\"%s.txt\" using 1:2 title 'PR curve' with lines ls 1 lw %d, '' using 1:3 title 'thresholds' with lines ls 1 lw %d lt -1",file_name.c_str(), lw, lw);
+        // close file
+        fclose(fp);
+
+        // run gnuplot => create png + eps
+        sprintf(command,"cd %s; gnuplot %s",dir_name.c_str(),(file_name + ".gp").c_str());
+        system(command);
+    }
     
 }
 
@@ -744,19 +792,18 @@ bool eval(string gt_dir, string result_dir, double given_threshold = 0.0){
             classes cls = (classes)c;
             if (eval_ground[c]) {
                 fp_det = fopen((result_dir + "/stats_" + class_names[c] + "_detection_ground.txt").c_str(), "w");
-                vector<double> precision;
+                vector<double> precisions;
                 vector<double> thresholds;
-                vector<double> recall;
-                //if( !new_eval_class(fp_det, fp_ori, cls, groundtruth, detections, groundboxoverlap, precision)) {
-                if( !new_eval_class(fp_det, fp_ori, cls, groundtruth, detections, groundboxoverlap, recall, thresholds, precision)) {
+                vector<double> recalls;
+                //if( !eval_class(fp_det, fp_ori, cls, groundtruth, detections, groundboxoverlap, precisions)) {
+                if( !new_eval_class(fp_det, fp_ori, cls, groundtruth, detections, groundboxoverlap, recalls, thresholds, precisions)) {
                     cout << " evaluation failed." << endl;
                     return false;
                 }
-                showVec(recall);
                 cout << "I finished new_eval_class" << endl;
                 fclose(fp_det);
-                //saveandplotplots(plot_dir, class_names[c] + "_detection_bev",class_names[c], precision);
-                newSaveAndPlotPlots(plot_dir, class_names[c] + "_detection_bev", class_names[c], recall, precision);
+                //saveandplotplots(plot_dir, class_names[c] + "_detection_bev",class_names[c], precisions);
+                newSaveAndPlotPlots(plot_dir, class_names[c] + "_detection_bev", class_names[c], recalls, precisions, thresholds);
             }
         }
     }
